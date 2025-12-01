@@ -1,4 +1,4 @@
-// pages/api/pin.js
+// pages/api/pin.js - Perbaikan untuk error "Attribute class redefined"
 const THEMES = {
   radical: {
     bg: "#0b1020",
@@ -51,30 +51,10 @@ function makeErrorSVG(message, themeObj = THEMES.dark) {
     .bg { fill: ${themeObj.bg}; }
     .title { font: 700 16px 'Segoe UI', 'Inter', Arial, sans-serif; fill: ${themeObj.accent}; }
     .msg { font: 400 13px 'Segoe UI', 'Inter', Arial, sans-serif; fill: ${themeObj.fg}; }
-    .link { font: 400 11px 'Segoe UI', 'Inter', Arial, sans-serif; fill: ${themeObj.accent}; text-decoration: underline; }
   </style>
-  <rect width="100%" height="100%" rx="10" class="bg" />
+  <rect width="100%" height="100%" rx="10" class="bg"/>
   <text x="20" y="40" class="title">⚠️ Error</text>
   <text x="20" y="70" class="msg">${text}</text>
-  <text x="20" y="100" class="link">github.com/${text.includes('username') ? 'fanky86/Premium' : '...'}</text>
-</svg>`;
-}
-
-// SVG untuk rate limit
-function makeRateLimitSVG(themeObj = THEMES.dark) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="520" height="140" role="img" aria-label="Rate Limit">
-  <style>
-    .bg { fill: ${themeObj.bg}; }
-    .title { font: 700 16px 'Segoe UI', 'Inter', Arial, sans-serif; fill: ${themeObj.accent}; }
-    .msg { font: 400 13px 'Segoe UI', 'Inter', Arial, sans-serif; fill: ${themeObj.fg}; }
-    .tip { font: 400 11px 'Segoe UI', 'Inter', Arial, sans-serif; fill: ${themeObj.fg}; opacity: 0.7; }
-  </style>
-  <rect width="100%" height="100%" rx="10" class="bg" />
-  <text x="20" y="40" class="title">⏳ Rate Limit Exceeded</text>
-  <text x="20" y="70" class="msg">GitHub API rate limit reached</text>
-  <text x="20" y="90" class="msg">Add GITHUB_TOKEN for higher limits</text>
-  <text x="20" y="120" class="tip">Will auto-refresh in 1 hour</text>
 </svg>`;
 }
 
@@ -89,7 +69,6 @@ export default async function handler(req, res) {
       cache_seconds = "1800"
     } = req.query;
 
-    // Validasi parameter
     if (!username || !repo) {
       res.status(400).setHeader("Content-Type", "image/svg+xml;charset=utf-8");
       res.send(makeErrorSVG("Missing parameters: username & repo required"));
@@ -118,18 +97,13 @@ export default async function handler(req, res) {
     // Fetch data dari GitHub API
     const repoResp = await fetch(apiUrl, { headers });
 
-    // Handle rate limiting
-    if (repoResp.status === 403 || repoResp.headers.get('x-ratelimit-remaining') === '0') {
-      const resetTime = repoResp.headers.get('x-ratelimit-reset');
-      const resetDate = resetTime ? new Date(parseInt(resetTime) * 1000).toLocaleTimeString() : 'unknown';
-      
+    if (repoResp.status === 403) {
       res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
       res.setHeader("Cache-Control", `public, max-age=${cache_seconds}, stale-while-revalidate=3600`);
-      res.status(200).send(makeRateLimitSVG(themeObj));
+      res.status(200).send(makeErrorSVG("GitHub API rate limit reached", themeObj));
       return;
     }
 
-    // Handle 404 - Repository not found
     if (repoResp.status === 404) {
       res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
       res.setHeader("Cache-Control", `public, max-age=300`);
@@ -137,21 +111,16 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Handle error lainnya
     if (!repoResp.ok) {
-      const errorText = await repoResp.text().catch(() => "Unknown error");
-      console.error("GitHub API error:", repoResp.status, errorText);
-      
       res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
       res.setHeader("Cache-Control", `public, max-age=300`);
       res.status(200).send(makeErrorSVG(`GitHub API error: ${repoResp.status}`, themeObj));
       return;
     }
 
-    // Parse data JSON
     const repoData = await repoResp.json();
 
-    // Ekstrak data yang diperlukan
+    // Ekstrak data
     const fullName = showOwnerBool ? repoData.full_name || `${username}/${repo}` : repoData.name || repo;
     const description = repoData.description || "No description provided";
     const stars = repoData.stargazers_count ?? 0;
@@ -169,7 +138,7 @@ export default async function handler(req, res) {
     const licenseName = repoData.license?.spdx_id || repoData.license?.name || null;
     const isPrivate = repoData.private || false;
 
-    // Format angka dengan K/M
+    // Format angka
     function formatNumber(num) {
       if (num >= 1000) {
         return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
@@ -177,7 +146,7 @@ export default async function handler(req, res) {
       return num.toString();
     }
 
-    // Build SVG
+    // FIX: Perbaikan error di sini - hapus atribut class yang duplikat
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="500" height="170" viewBox="0 0 500 170" role="img" aria-label="${esc(fullName)}">
   <style>
@@ -192,8 +161,8 @@ export default async function handler(req, res) {
     .private-badge { fill: ${isPrivate ? '#ff6b6b' : '#50fa7b'}; }
   </style>
 
-  <!-- Background dengan border -->
-  <rect x="1" y="1" width="498" height="168" rx="12" class="bg" class="border"/>
+  <!-- FIXED: Hapus duplikat class attribute -->
+  <rect x="1" y="1" width="498" height="168" rx="12" class="bg" style="stroke: ${hideBorderBool ? themeObj.bg : themeObj.accent}; stroke-width: ${hideBorderBool ? 0 : 2}"/>
   
   <!-- Header dengan nama repo -->
   <g transform="translate(20, 30)">
