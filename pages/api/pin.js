@@ -1,5 +1,6 @@
 // pages/api/pin.js
-import fetch from "node-fetch";
+// Menggunakan fetch global (Next.js / Vercel sudah menyediakan)
+// Hapus import node-fetch jika ada.
 
 const THEMES = {
   radical: {
@@ -29,32 +30,69 @@ function esc(s) {
     .replace(/>/g, "&gt;");
 }
 
+function makeErrorSVG(message, themeObj = THEMES.default) {
+  const text = esc(message);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="120" role="img" aria-label="${text}">
+  <style>
+    .bg { fill: ${themeObj.bg}; }
+    .msg { font: 700 14px 'Inter', Arial, sans-serif; fill: ${themeObj.fg}; }
+  </style>
+  <rect width="100%" height="100%" rx="10" class="bg" />
+  <text x="20" y="64" class="msg">${text}</text>
+</svg>`;
+}
+
 export default async function handler(req, res) {
   try {
     const { username, repo, theme = "radical", hide_border = "false" } = req.query;
 
     if (!username || !repo) {
-      res.status(400).send("Missing username or repo query param. Example: ?username=fanky86&repo=Premium");
+      res.status(400).setHeader("Content-Type", "image/svg+xml;charset=utf-8");
+      res.send(makeErrorSVG("Missing username or repo query param. Example: ?username=fanky86&repo=Premium"));
       return;
     }
 
     const themeObj = THEMES[theme] || THEMES.default;
 
-    // Use GitHub token if set (recommended to avoid rate limits)
+    // headers untuk request GitHub API
     const headers = {
       "User-Agent": "my-github-pin"
     };
     if (process.env.GITHUB_TOKEN) {
+      // modern tokens start with "ghp_" or "gho_" etc. GitHub also prefers "token" or "Bearer"
       headers["Authorization"] = `token ${process.env.GITHUB_TOKEN}`;
     }
 
-    // fetch repo info
-    const repoResp = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(repo)}`, { headers });
-    if (repoResp.status === 404) {
-      res.setHeader("Content-Type", "image/svg+xml");
-      res.status(200).send(`<svg xmlns="http://www.w3.org/2000/svg" width="520" height="120"><rect width="100%" height="100%" fill="${themeObj.bg}"/><text x="20" y="40" fill="${themeObj.fg}" font-size="16" font-family="Verdana, Inter, Arial">Repository tidak ditemukan</text></svg>`);
+    const owner = encodeURIComponent(username);
+    const repoName = encodeURIComponent(repo);
+    const apiUrl = `https://api.github.com/repos/${owner}/${repoName}`;
+
+    const repoResp = await fetch(apiUrl, { headers });
+
+    // khusus: rate limit / permission
+    if (repoResp.status === 403) {
+      // bisa jadi rate-limit atau token tidak punya permission
+      res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
+      res.status(200).send(makeErrorSVG("GitHub API rate limit or permission error. Try adding GITHUB_TOKEN.", themeObj));
       return;
     }
+
+    if (repoResp.status === 404) {
+      res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
+      res.status(200).send(makeErrorSVG("Repository tidak ditemukan", themeObj));
+      return;
+    }
+
+    if (!repoResp.ok) {
+      // general error
+      const text = await repoResp.text().catch(() => "Unknown error");
+      res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
+      res.status(200).send(makeErrorSVG(`GitHub API error: ${repoResp.status}`, themeObj));
+      console.error("GitHub API error:", repoResp.status, text);
+      return;
+    }
+
     const repoJson = await repoResp.json();
 
     // pull values
@@ -103,12 +141,12 @@ export default async function handler(req, res) {
 
     // caching headers (short), helps reduce API calls
     res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
-    // Cache 5 minutes (adjust as needed). Vercel will respect these.
+    // Cache 5 minutes; Vercel respects s-maxage
     res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
     res.status(200).send(svg);
   } catch (err) {
-    console.error(err);
-    res.setHeader("Content-Type", "image/svg+xml");
-    res.status(500).send(`<svg xmlns="http://www.w3.org/2000/svg" width="520" height="120"><rect width="100%" height="100%" fill="#111"/><text x="20" y="40" fill="#fff" font-size="14">Error generating card</text></svg>`);
+    console.error("Unhandled error in /api/pin:", err);
+    res.setHeader("Content-Type", "image/svg+xml;charset=utf-8");
+    res.status(500).send(makeErrorSVG("Error generating card"));
   }
 }
